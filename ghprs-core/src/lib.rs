@@ -1,12 +1,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct GithubAuthor {
     pub login: String,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct GithubPRReview {
     pub id: String,
     pub author: GithubAuthor,
@@ -14,10 +14,16 @@ pub struct GithubPRReview {
     pub submitted_at: DateTime<Utc>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct GithubPRStatus {
     pub id: String,
     pub reviews: Vec<GithubPRReview>,
     pub title: String,
     pub repository: String,
+}
+
+impl GithubPRStatus {
+    pub fn latest_review_time(&self) -> Option<DateTime<Utc>> {
+        self.reviews.iter().map(|r| r.submitted_at).max()
+    }
 }

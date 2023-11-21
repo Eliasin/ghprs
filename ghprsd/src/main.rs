@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use app::AppState;
-use axum::routing::get;
+use axum::routing::{delete, get, post};
 use axum::Router;
 use clap::Parser;
 use gh_client::GithubClient;
@@ -41,17 +41,28 @@ async fn get_config(args: Args) -> Result<Config, Box<dyn std::error::Error>> {
 
 async fn serve(config: Config, github_client: GithubClient) {
     let port = config.port;
-    let sessions = HashMap::new();
+    let sessions = Mutex::new(HashMap::new());
 
-    let app_state = Arc::new(Mutex::new(AppState {
+    let app_state = Arc::new(AppState {
         config,
         github_client,
         sessions,
-    }));
+    });
 
     let app = Router::new()
-        .route("/new-prs", get(app::new_prs_global))
-        .route("/new-prs/:session_name", get(app::new_prs))
+        .route(
+            "/:session_name/unacknowledged-prs",
+            get(app::unacknowledged_prs),
+        )
+        .route(
+            "/:session_name/acknowledgement/:pr_id",
+            post(app::acknowledge_review).delete(app::unacknowledge_review),
+        )
+        .route(
+            "/:session_name/acknowledgement",
+            get(app::acknowledged_reviews),
+        )
+        .route("/:session_name/clear-session", delete(app::clear_session))
         .with_state(app_state);
 
     axum::Server::bind(
@@ -61,11 +72,12 @@ async fn serve(config: Config, github_client: GithubClient) {
     )
     .serve(app.into_make_service())
     .await
-    .expect("failed tos start axum service");
+    .expect("failed to start axum service");
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    simple_logger::init_with_env().unwrap();
     let config = get_config(Args::parse()).await?;
     let github_client = GithubClient::new().await?;
 

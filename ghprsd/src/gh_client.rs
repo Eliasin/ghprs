@@ -1,9 +1,8 @@
-use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 
 use thiserror::Error;
-use tokio::{process::Command, task::spawn_blocking};
+use tokio::process::Command;
 
 use ghprs_core::GithubPRReview;
 
@@ -55,7 +54,6 @@ impl GithubClient {
         &self,
         repository: S,
         author: Option<S>,
-        since: Option<DateTime<chrono::Local>>,
     ) -> Result<Vec<GithubPRStatus>> {
         let mut command = {
             let mut c = Command::new("gh");
@@ -85,27 +83,16 @@ impl GithubClient {
         };
 
         let pr_json = String::from_utf8_lossy(&command_output.stdout).to_string();
-        let since_timestamp = match since {
-            Some(since) => since.timestamp(),
-            None => 0,
-        };
 
-        let new_prs = spawn_blocking(move || jq_rs::run(&format!(".[] | select(.reviews | map(.submittedAt | fromdate) | max | select(. != null) | . > {})", since_timestamp), pr_json.as_ref())
-        ).await.expect("waiting on tokio compute task failed").expect("jq error");
+        let pr_statuses =
+            serde_json::from_str(&pr_json).map_err(|e| GithubClientError::UnexpectedOutput {
+                operation: "gh pr list".to_string(),
+                stderr: String::from_utf8_lossy(&command_output.stderr).to_string(),
+                stdout: String::from_utf8_lossy(&command_output.stdout).to_string(),
+                underlying_error: Box::new(e),
+            })?;
 
-        let pr_status = new_prs
-            .split('\n')
-            .flat_map(|pr_json| -> Result<GithubPRStatus> {
-                serde_json::from_str(pr_json).map_err(|e| GithubClientError::UnexpectedOutput {
-                    operation: "gh pr list".to_string(),
-                    stderr: String::from_utf8_lossy(&command_output.stderr).to_string(),
-                    stdout: String::from_utf8_lossy(&command_output.stdout).to_string(),
-                    underlying_error: Box::new(e),
-                })
-            })
-            .collect();
-
-        Ok(pr_status)
+        Ok(pr_statuses)
     }
 
     pub async fn new() -> Result<GithubClient> {
