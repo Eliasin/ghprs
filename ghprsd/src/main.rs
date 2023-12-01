@@ -2,9 +2,10 @@ mod app;
 mod gh_client;
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use app::AppState;
+use app::{AppState, Session};
 use axum::routing::{delete, get, post};
 use axum::Router;
 use clap::Parser;
@@ -25,6 +26,7 @@ pub struct Config {
     author: String,
     repositories: Vec<String>,
     port: Option<u16>,
+    session_file_path: Option<PathBuf>,
 }
 
 const DEFAULT_PORT: u16 = 7192;
@@ -39,9 +41,54 @@ async fn get_config(args: Args) -> Result<Config, Box<dyn std::error::Error>> {
     )?)
 }
 
+pub fn save_sessions<P: AsRef<Path>>(
+    session_file_path: Option<&P>,
+    sessions: &HashMap<String, Session>,
+) {
+    let Some(session_file_path) = session_file_path else {
+        return;
+    };
+    let session_file_path = session_file_path.as_ref();
+
+    let Ok(file) = std::fs::File::create(session_file_path) else {
+        log::error!(
+            "Failed to sync sessions to disk at {}",
+            session_file_path.display()
+        );
+        return;
+    };
+
+    if let Err(e) = serde_json::to_writer(file, sessions) {
+        log::error!(
+            "Failed to serialize/write sessions to disk at {}, error: {e}",
+            session_file_path.display()
+        )
+    }
+}
+
+fn load_sessions<P: AsRef<Path>>(session_file_path: Option<&P>) -> HashMap<String, Session> {
+    let Some(session_file_path) = session_file_path else {
+        return HashMap::new();
+    };
+    let session_file_path = session_file_path.as_ref();
+
+    let Ok(file) = std::fs::File::open(session_file_path) else {
+        log::warn!("No file found at session file path provided, using empty initializer");
+        return HashMap::new();
+    };
+
+    serde_json::from_reader(file).unwrap_or_else(|_| {
+        panic!(
+            "could not parse file at {} as JSON",
+            session_file_path.display()
+        )
+    })
+}
+
 async fn serve(config: Config, github_client: GithubClient) {
     let port = config.port;
-    let sessions = Mutex::new(HashMap::new());
+
+    let sessions = Mutex::new(load_sessions(config.session_file_path.as_ref()));
 
     let app_state = Arc::new(AppState {
         config,

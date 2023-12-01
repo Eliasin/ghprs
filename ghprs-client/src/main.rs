@@ -1,20 +1,10 @@
+use std::io::{self, Write};
+
 use chrono::{DateTime, Local};
 use clap::{Parser, Subcommand};
 use ghprs_core::GithubPRStatus;
 use reqwest::blocking::Response;
 use tabled::{Table, Tabled};
-
-#[derive(Subcommand, Debug)]
-enum PrIdCommand {
-    Id {
-        #[arg(help = "id of pr")]
-        pr_id: String,
-    },
-    Index {
-        #[arg(help = "index/number of pr when listed")]
-        index: u32,
-    },
-}
 
 #[derive(Subcommand, Debug)]
 enum Command {
@@ -28,15 +18,9 @@ enum Command {
     #[clap(alias = "fa", about = "lists acknowledged prs; aliased to 'fa'")]
     FetchAcked {},
     #[clap(alias = "a", about = "acknowledge a review; aliased to 'a'")]
-    Ack {
-        #[command(subcommand)]
-        command: PrIdCommand,
-    },
+    Ack {},
     #[clap(alias = "ua", about = "unacknowledge a review; aliased to 'ua'")]
-    Unack {
-        #[command(subcommand)]
-        command: PrIdCommand,
-    },
+    Unack {},
     #[clap(alias = "cls", about = "clear all session state; aliased to 'cls'")]
     ClearSession {},
 }
@@ -128,6 +112,41 @@ fn fetch_acknowledged_prs<S: AsRef<str>>(
     Ok(prs)
 }
 
+fn select_pr(prs: &[GithubPRStatus]) -> Option<String> {
+    if prs.is_empty() {
+        println!("{}", Table::new(prettyify_prs(prs)));
+        return None;
+    }
+
+    let mut buffer = String::new();
+
+    let pr = loop {
+        print!("{}\n>> Enter index: ", Table::new(prettyify_prs(prs)));
+        std::io::stdout().flush().unwrap();
+        io::stdin().read_line(&mut buffer).unwrap();
+
+        match str::parse::<usize>(buffer.trim()) {
+            Ok(index) => {
+                break match prs.get(index) {
+                    Some(pr_id) => pr_id,
+                    None => {
+                        eprintln!(">> ERROR: Invalid index {index}");
+                        continue;
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!(">> ERROR: Invalid index: {e}");
+                continue;
+            }
+        };
+    };
+
+    println!("Selected '{}'", pr.title);
+
+    Some(pr.id.clone())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let server_url = format!("http://localhost:{}", args.port);
@@ -161,31 +180,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         },
-        Command::Ack { command } => {
-            let pr_id = match command {
-                PrIdCommand::Id { pr_id } => pr_id,
-                PrIdCommand::Index { index } => {
-                    let index: usize = index.try_into().unwrap();
+        Command::Ack {} => {
+            let prs = match fetch_unacknowledged_prs(&server_url, &session_name) {
+                Ok(prs) => prs,
+                Err(e) => {
+                    eprintln!("Got error from server: {}", e);
+                    std::process::exit(1);
+                }
+            };
 
-                    let prs = match fetch_unacknowledged_prs(&server_url, &session_name) {
-                        Ok(prs) => prs,
-                        Err(e) => {
-                            eprintln!("Got error from server: {}", e);
-                            std::process::exit(1);
-                        }
-                    };
-
-                    match prs.get(index) {
-                        Some(pr) => {
-                            println!("Acknowledging: {}", pr.title);
-                            pr.id.clone()
-                        }
-                        None => {
-                            eprintln!(">> ERROR: Invalid index {index}");
-                            println!("{}", Table::new(prettyify_prs(&prs)));
-                            std::process::exit(1);
-                        }
-                    }
+            let pr_id = match select_pr(&prs) {
+                Some(pr_id) => pr_id,
+                None => {
+                    eprintln!("> No prs <");
+                    std::process::exit(0);
                 }
             };
 
@@ -205,37 +213,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         std::process::exit(1);
                     }
                 };
-                println!("Now:\n{}", Table::new(prettyify_prs(&prs)))
+                println!("\n> Now <\n{}", Table::new(prettyify_prs(&prs)))
             } else {
                 eprintln!("Got error from server: {:?}", response.error_for_status());
                 std::process::exit(1);
             }
         }
-        Command::Unack { command } => {
-            let pr_id = match command {
-                PrIdCommand::Id { pr_id } => pr_id,
-                PrIdCommand::Index { index } => {
-                    let index: usize = index.try_into().unwrap();
+        Command::Unack {} => {
+            let prs = match fetch_acknowledged_prs(&server_url, &session_name) {
+                Ok(prs) => prs,
+                Err(e) => {
+                    eprintln!("Got error from server: {}", e);
+                    std::process::exit(1);
+                }
+            };
 
-                    let prs = match fetch_acknowledged_prs(&server_url, &session_name) {
-                        Ok(prs) => prs,
-                        Err(e) => {
-                            eprintln!("Got error from server: {}", e);
-                            std::process::exit(1);
-                        }
-                    };
-
-                    match prs.get(index) {
-                        Some(pr) => {
-                            println!("Unacknowledging: {}", pr.title);
-                            pr.id.clone()
-                        }
-                        None => {
-                            eprintln!(">> ERROR: Invalid index {index}");
-                            println!("{}", Table::new(prettyify_prs(&prs)));
-                            std::process::exit(1);
-                        }
-                    }
+            let pr_id = match select_pr(&prs) {
+                Some(pr_id) => pr_id,
+                None => {
+                    eprintln!("> No prs <");
+                    std::process::exit(0);
                 }
             };
 
@@ -255,7 +252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         std::process::exit(1);
                     }
                 };
-                println!("Now:\n{}", Table::new(prettyify_prs(&prs)))
+                println!("\n> Now <\n{}", Table::new(prettyify_prs(&prs)))
             } else {
                 eprintln!("Got error from server: {:?}", response.error_for_status());
                 std::process::exit(1);
@@ -264,7 +261,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::ClearSession {} => {
             let client = reqwest::blocking::Client::new();
             let response = client
-                .delete(format!("{server_url}/clear-session/{session_name}"))
+                .delete(format!("{server_url}/{session_name}/clear-session"))
                 .send()?;
 
             if response.status().is_success() {
