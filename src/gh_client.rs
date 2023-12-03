@@ -1,10 +1,36 @@
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 
+use chrono::{DateTime, Utc};
 use thiserror::Error;
 use tokio::process::Command;
 
-use ghprs_core::GithubPRReview;
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct GithubAuthor {
+    pub login: String,
+}
+
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct GithubPRReview {
+    pub id: String,
+    pub author: GithubAuthor,
+    #[serde(rename = "submittedAt")]
+    pub submitted_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct GithubPRStatus {
+    pub id: String,
+    pub reviews: Vec<GithubPRReview>,
+    pub title: String,
+    pub repository: String,
+}
+
+impl GithubPRStatus {
+    pub fn latest_review_time(&self) -> Option<DateTime<Utc>> {
+        self.reviews.iter().map(|r| r.submitted_at).max()
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum GithubClientError {
@@ -29,15 +55,15 @@ pub enum GithubClientError {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
-pub struct GithubPRStatus {
+struct RawGithubPRStatus {
     id: String,
     reviews: Vec<GithubPRReview>,
     title: String,
 }
 
 impl GithubPRStatus {
-    pub fn convert_to_core(self, repository: String) -> ghprs_core::GithubPRStatus {
-        ghprs_core::GithubPRStatus {
+    pub fn convert_to_core(self, repository: String) -> GithubPRStatus {
+        GithubPRStatus {
             repository,
             id: self.id,
             reviews: self.reviews,
@@ -50,10 +76,10 @@ pub type Result<T> = std::result::Result<T, GithubClientError>;
 pub struct GithubClient {}
 
 impl GithubClient {
-    pub async fn new_pr_status<S: AsRef<str>>(
+    pub async fn new_pr_status<S1: AsRef<str>, S2: AsRef<str>>(
         &self,
-        repository: S,
-        author: Option<S>,
+        repository: S1,
+        author: Option<S2>,
     ) -> Result<Vec<GithubPRStatus>> {
         let mut command = {
             let mut c = Command::new("gh");
