@@ -19,19 +19,19 @@ impl From<&SessionPr> for GithubPRStatus {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SessionConfig {
     pub author: String,
     pub repositories: HashSet<String>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SessionState {
     pub last_fetch_time: Option<DateTime<Utc>>,
     pub prs: HashMap<PullRequestId, SessionPr>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Session {
     pub prs: HashMap<PullRequestId, SessionPr>,
     pub author: String,
@@ -82,6 +82,7 @@ impl Session {
 
 impl Session {
     pub async fn fetch_prs(&self, github_client: &GithubClient) -> Vec<GithubPRStatus> {
+        use futures::future::join_all;
         let Session {
             prs: _,
             author,
@@ -89,31 +90,35 @@ impl Session {
             last_fetch_time: _,
         } = self;
 
-        let mut pr_statueses = vec![];
-
-        for repository in repositories.iter() {
-            let repository_pr_statuses =
-                match github_client.new_pr_status(repository, Some(author)).await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        eprintln!(
+        let pr_statuses: Vec<Option<Vec<GithubPRStatus>>> =
+            join_all(repositories.iter().map(|repository| async move {
+                let repository_pr_statuses =
+                    match github_client.new_pr_status(repository, Some(author)).await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!(
                         "Encountered error processing statuses for repo {} with for author {}: {}",
                         &repository, author, e
                     );
-                        continue;
-                    }
-                };
+                            return None;
+                        }
+                    };
 
-            pr_statueses.extend(
-                repository_pr_statuses
-                    .into_iter()
-                    .map(|repository_pr_status| {
-                        repository_pr_status.convert_to_core(repository.clone())
-                    }),
-            );
-        }
+                Some(
+                    repository_pr_statuses
+                        .into_iter()
+                        .map(|repository_pr_status| {
+                            repository_pr_status.convert_to_core(repository.clone())
+                        })
+                        .collect(),
+                )
+            }))
+            .await;
 
-        pr_statueses
+        pr_statuses
+            .into_iter()
+            .flat_map(|p| p.into_iter().flatten())
+            .collect()
     }
 
     pub async fn force_update_session_prs(&mut self, gh_client: &GithubClient) {
@@ -186,7 +191,7 @@ pub async fn unacknowledged_prs(
         .prs
         .iter()
         .filter_map(|(_, pr)| -> Option<GithubPRStatus> {
-            if !pr.acknowledged {
+            if !pr.acknowledged && !pr.pr.reviews.is_empty() {
                 Some(pr.into())
             } else {
                 None

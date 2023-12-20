@@ -81,12 +81,10 @@ impl GithubClient {
         repository: S1,
         author: Option<S2>,
     ) -> Result<Vec<GithubPRStatus>> {
+        let repository = repository.as_ref();
         let mut command = {
             let mut c = Command::new("gh");
-            c.arg("pr")
-                .arg("list")
-                .arg("--repo")
-                .arg(repository.as_ref());
+            c.arg("pr").arg("list").arg("--repo").arg(repository);
 
             if let Some(author) = author {
                 c.arg("--author").arg(author.as_ref());
@@ -110,7 +108,7 @@ impl GithubClient {
 
         let pr_json = String::from_utf8_lossy(&command_output.stdout).to_string();
 
-        let pr_statuses =
+        let raw_pr_statuses: Vec<RawGithubPRStatus> =
             serde_json::from_str(&pr_json).map_err(|e| GithubClientError::UnexpectedOutput {
                 operation: "gh pr list".to_string(),
                 stderr: String::from_utf8_lossy(&command_output.stderr).to_string(),
@@ -118,7 +116,19 @@ impl GithubClient {
                 underlying_error: Box::new(e),
             })?;
 
-        Ok(pr_statuses)
+        Ok(raw_pr_statuses
+            .into_iter()
+            .map(|raw| {
+                let RawGithubPRStatus { id, reviews, title } = raw;
+
+                GithubPRStatus {
+                    repository: repository.to_string(),
+                    id,
+                    reviews,
+                    title,
+                }
+            })
+            .collect())
     }
 
     pub async fn new() -> Result<GithubClient> {

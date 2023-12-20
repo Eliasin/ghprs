@@ -45,7 +45,6 @@ struct Args {
     #[arg(short, long, help = "path to config file")]
     session_config_path: Option<PathBuf>,
     #[arg(
-        short,
         long,
         help = "path to session state, also set by GHPRS_STATE_FILE env variable"
     )]
@@ -104,18 +103,21 @@ fn config_directory() -> PathBuf {
         .unwrap_or(PathBuf::from(env::var("HOME").ok().unwrap()).join(".config"))
 }
 
+const SESSION_CONFIG_FILENAME: &str = "ghprs.toml";
+const SESSION_STATE_FILENAME: &str = "ghprs-state.json";
+
 fn save_session(session: &Session, args: &Args) -> anyhow::Result<()> {
     let session_config_path = args
         .session_config_path
         .clone()
         .or(env::var("GHPRS_CONFIG_FILE").ok().map(|s| s.into()))
-        .unwrap_or(config_directory().join("ghprs.toml"));
+        .unwrap_or(config_directory().join(SESSION_CONFIG_FILENAME));
 
     let session_state_path = args
         .session_state_path
         .clone()
         .or(env::var("GHPRS_STATE_FILE").ok().map(|s| s.into()))
-        .unwrap_or(config_directory().join("ghprs-state.json"));
+        .unwrap_or(config_directory().join(SESSION_STATE_FILENAME));
 
     let (session_config, session_state): (SessionConfig, SessionState) = session.clone().into();
     if let Err(e) = save_session_config(&session_config, session_config_path) {
@@ -134,7 +136,7 @@ fn load_session(args: &Args) -> anyhow::Result<Session> {
         .session_config_path
         .clone()
         .or(env::var("GHPRS_CONFIG_FILE").ok().map(|s| s.into()))
-        .unwrap_or(config_directory().join("ghprs.toml"));
+        .unwrap_or(config_directory().join(SESSION_CONFIG_FILENAME));
 
     let Ok(mut config_file) = std::fs::File::open(session_config_file_path) else {
         bail!("Need to provide config file, path is specified in args, as GHPRS_CONFIG_FILE env var or at XDG_CONFIG_HOME/ghprs.toml")
@@ -154,7 +156,7 @@ fn load_session(args: &Args) -> anyhow::Result<Session> {
         .clone()
         .or(env::var("GHPRS_CONFIG_FILE").ok().map(|s| s.into()))
         .or(config.session_state_file.clone())
-        .unwrap_or(config_directory().join("ghpts-state.json"));
+        .unwrap_or(config_directory().join(SESSION_STATE_FILENAME));
 
     let state: SessionState = std::fs::File::open(session_state_file_path)
         .ok()
@@ -178,7 +180,7 @@ fn prettyify_prs(prs: &[GithubPRStatus]) -> Vec<PrettyGithubPRStatus> {
         .filter_map(|(num, pr)| -> Option<PrettyGithubPRStatus> {
             Some(PrettyGithubPRStatus {
                 num,
-                title: format!("{:.20}", pr.title),
+                title: pr.title.clone(),
                 repository: pr.repository.clone(),
                 latest_review_time: pr.latest_review_time()?.into(),
             })
