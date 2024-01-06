@@ -226,8 +226,11 @@ fn select_pr(prs: &[GithubPRStatus]) -> Option<String> {
     Some(pr.id.clone())
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    smol::block_on(_main())
+}
+
+async fn _main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let mut session = load_session(&args)?;

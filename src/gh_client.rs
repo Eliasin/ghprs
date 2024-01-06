@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 
 use chrono::{DateTime, Utc};
+use smol::process::Command;
 use thiserror::Error;
-use tokio::process::Command;
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct GithubAuthor {
