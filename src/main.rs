@@ -11,7 +11,7 @@ use std::{
 use anyhow::bail;
 use chrono::{DateTime, Local};
 use clap::{Parser, Subcommand};
-use gh_client::{GithubClient, GithubPRStatus};
+use gh_client::GithubPRStatus;
 use prs::{
     acknowledge_review, clear_session, unacknowledge_review, unacknowledged_prs, Session,
     SessionConfig, SessionState,
@@ -49,6 +49,9 @@ struct Args {
         help = "path to session state, also set by GHPRS_STATE_FILE env variable"
     )]
     session_state_path: Option<PathBuf>,
+
+    #[arg(long, short, default_value_t = false)]
+    force: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -228,25 +231,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let mut session = load_session(&args)?;
-    let gh_client = GithubClient::new().await?;
+
+    if args.force {
+        session.force_update_session_prs();
+    }
 
     match args.command {
         Command::Count {} => {
-            println!(
-                "{}",
-                unacknowledged_prs(&mut session, &gh_client).await.len()
-            )
+            println!("{}", unacknowledged_prs(&mut session).await?.len())
         }
         Command::Fetch {} => {
-            let prs = unacknowledged_prs(&mut session, &gh_client).await;
+            let prs = unacknowledged_prs(&mut session).await?;
             println!("{}", Table::new(prettyify_prs(&prs)))
         }
         Command::FetchAcked {} => {
-            let prs = acknowledged_prs(&mut session, &gh_client).await;
+            let prs = acknowledged_prs(&mut session).await?;
             println!("{}", Table::new(prettyify_prs(&prs)))
         }
         Command::Ack {} => {
-            let prs = unacknowledged_prs(&mut session, &gh_client).await;
+            let prs = unacknowledged_prs(&mut session).await?;
 
             let pr_id = match select_pr(&prs) {
                 Some(pr_id) => pr_id,
@@ -256,11 +259,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            match acknowledge_review(&mut session, &gh_client, &pr_id).await {
+            match acknowledge_review(&mut session, &pr_id).await {
                 Ok(_) => {
-                    session.force_update_session_prs(&gh_client).await;
-                    save_session(&session, &args)?;
-                    let prs = unacknowledged_prs(&mut session, &gh_client).await;
+                    let prs = unacknowledged_prs(&mut session).await?;
                     println!("\n> Now <\n{}", Table::new(prettyify_prs(&prs)))
                 }
                 Err(e) => {
@@ -269,7 +270,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Command::Unack {} => {
-            let prs = acknowledged_prs(&mut session, &gh_client).await;
+            let prs = acknowledged_prs(&mut session).await?;
 
             let pr_id = match select_pr(&prs) {
                 Some(pr_id) => pr_id,
@@ -279,11 +280,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            match unacknowledge_review(&mut session, &gh_client, &pr_id).await {
+            match unacknowledge_review(&mut session, &pr_id).await {
                 Ok(_) => {
-                    session.force_update_session_prs(&gh_client).await;
-                    save_session(&session, &args)?;
-                    let prs = acknowledged_prs(&mut session, &gh_client).await;
+                    let prs = acknowledged_prs(&mut session).await?;
                     println!("\n> Now <\n{}", Table::new(prettyify_prs(&prs)))
                 }
                 Err(e) => {
@@ -293,9 +292,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::ClearSession {} => {
             clear_session(&mut session).await;
-            save_session(&session, &args)?;
         }
     };
+
+    save_session(&session, &args)?;
 
     Ok(())
 }

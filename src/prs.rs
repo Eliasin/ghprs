@@ -2,7 +2,10 @@ use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-use crate::{gh_client::GithubClient, GithubPRStatus};
+use crate::{
+    gh_client::{GithubClient, GithubClientError},
+    GithubPRStatus,
+};
 use chrono::{DateTime, Duration, Utc};
 
 pub type PullRequestId = String;
@@ -121,20 +124,20 @@ impl Session {
             .collect()
     }
 
-    pub async fn force_update_session_prs(&mut self, gh_client: &GithubClient) {
+    pub fn force_update_session_prs(&mut self) {
         self.last_fetch_time = None;
-        self.update_session_prs(gh_client).await;
     }
 
-    pub async fn update_session_prs(&mut self, gh_client: &GithubClient) {
+    pub async fn update_session_prs(&mut self) -> Result<(), GithubClientError> {
         if let Some(last_fetch_time) = self.last_fetch_time {
             let time_since_last_fetch = Utc::now().signed_duration_since(last_fetch_time);
             if time_since_last_fetch < Duration::minutes(5) {
-                return;
+                return Ok(());
             }
         }
 
-        let prs = self.fetch_prs(gh_client).await;
+        let gh_client = GithubClient::new().await?;
+        let prs = self.fetch_prs(&gh_client).await;
         self.last_fetch_time = Some(Utc::now());
 
         let mut still_existing_prs = HashSet::new();
@@ -178,14 +181,15 @@ impl Session {
                 self.prs.remove(&session_pr_id);
             }
         }
+
+        Ok(())
     }
 }
 
 pub async fn unacknowledged_prs(
     session: &mut Session,
-    gh_client: &GithubClient,
-) -> Vec<GithubPRStatus> {
-    session.update_session_prs(gh_client).await;
+) -> Result<Vec<GithubPRStatus>, GithubClientError> {
+    session.update_session_prs().await?;
 
     let prs = session
         .prs
@@ -199,15 +203,14 @@ pub async fn unacknowledged_prs(
         })
         .collect::<Vec<GithubPRStatus>>();
 
-    prs
+    Ok(prs)
 }
 
 pub async fn acknowledge_review(
     session: &mut Session,
-    gh_client: &GithubClient,
     pr_id: &PullRequestId,
 ) -> anyhow::Result<()> {
-    session.update_session_prs(gh_client).await;
+    session.update_session_prs().await?;
 
     match session.prs.get_mut(pr_id) {
         Some(pr) => {
@@ -220,10 +223,9 @@ pub async fn acknowledge_review(
 
 pub async fn unacknowledge_review(
     session: &mut Session,
-    gh_client: &GithubClient,
     pr_id: &PullRequestId,
 ) -> anyhow::Result<()> {
-    session.update_session_prs(gh_client).await;
+    session.update_session_prs().await?;
 
     match session.prs.get_mut(pr_id) {
         Some(pr) => {
@@ -236,11 +238,10 @@ pub async fn unacknowledge_review(
 
 pub async fn acknowledged_prs(
     session: &mut Session,
-    gh_client: &GithubClient,
-) -> Vec<GithubPRStatus> {
-    session.update_session_prs(gh_client).await;
+) -> Result<Vec<GithubPRStatus>, GithubClientError> {
+    session.update_session_prs().await?;
 
-    session
+    Ok(session
         .prs
         .iter()
         .filter_map(|(_, pr)| -> Option<GithubPRStatus> {
@@ -250,7 +251,7 @@ pub async fn acknowledged_prs(
                 None
             }
         })
-        .collect::<Vec<GithubPRStatus>>()
+        .collect::<Vec<GithubPRStatus>>())
 }
 
 pub async fn clear_session(session: &mut Session) {

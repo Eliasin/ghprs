@@ -45,7 +45,7 @@ pub enum GithubClientError {
         operation: String,
         stderr: String,
         stdout: String,
-        underlying_error: Box<dyn std::error::Error>,
+        underlying_error: Box<dyn std::error::Error + Sync + Send>,
     },
     #[error("Got unexpected io error when running {operation}: {underlying_error}")]
     UnexpectedCommandError {
