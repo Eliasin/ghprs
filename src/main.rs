@@ -16,7 +16,8 @@ use prs::{
     acknowledge_review, clear_session, unacknowledge_review, unacknowledged_prs, Session,
     SessionConfig, SessionState,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tabled::{Table, Tabled};
 
 use crate::prs::acknowledged_prs;
@@ -27,11 +28,20 @@ enum Command {
         alias = "c",
         about = "counts how many unacknowledged pr reviews there are; aliased to 'c'"
     )]
-    Count {},
+    Count {
+        #[arg(long)]
+        json: bool,
+    },
     #[clap(alias = "f", about = "lists unacknowledged prs; aliased to 'f'")]
-    Fetch {},
+    Fetch {
+        #[arg(long)]
+        json: bool,
+    },
     #[clap(alias = "fa", about = "lists acknowledged prs; aliased to 'fa'")]
-    FetchAcked {},
+    FetchAcked {
+        #[arg(long)]
+        json: bool,
+    },
     #[clap(alias = "a", about = "acknowledge a review; aliased to 'a'")]
     Ack {},
     #[clap(alias = "ua", about = "unacknowledge a review; aliased to 'ua'")]
@@ -169,7 +179,7 @@ fn load_session(args: &Args) -> anyhow::Result<Session> {
     Ok(Session::new(config.into(), state))
 }
 
-#[derive(Clone, Debug, Tabled)]
+#[derive(Serialize, Clone, Debug, Tabled)]
 struct PrettyGithubPRStatus {
     pub num: usize,
     pub title: String,
@@ -240,16 +250,38 @@ async fn _main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     match args.command {
-        Command::Count {} => {
-            println!("{}", unacknowledged_prs(&mut session).await?.len())
+        Command::Count { json } => {
+            let count = &unacknowledged_prs(&mut session).await?.len();
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string::<serde_json::Value>(&json!({
+                        "num_acknowledged": count
+                    }))?
+                )
+            } else {
+                println!("{}", count)
+            }
         }
-        Command::Fetch {} => {
+        Command::Fetch { json } => {
             let prs = unacknowledged_prs(&mut session).await?;
-            println!("{}", Table::new(prettyify_prs(&prs)))
+            let pretty_prs = prettyify_prs(&prs);
+
+            if json {
+                println!("{}", serde_json::to_string(&pretty_prs)?)
+            } else {
+                println!("{}", Table::new(pretty_prs))
+            }
         }
-        Command::FetchAcked {} => {
+        Command::FetchAcked { json } => {
             let prs = acknowledged_prs(&mut session).await?;
-            println!("{}", Table::new(prettyify_prs(&prs)))
+            let pretty_prs = prettyify_prs(&prs);
+
+            if json {
+                println!("{}", serde_json::to_string(&pretty_prs)?)
+            } else {
+                println!("{}", Table::new(pretty_prs))
+            }
         }
         Command::Ack {} => {
             let prs = unacknowledged_prs(&mut session).await?;
